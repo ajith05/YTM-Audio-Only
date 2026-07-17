@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "YTM Audio-Only",
+  "version": "0.1.0",
+  "description": "Play audio-only (art-track) versions of YouTube Music albums via the official YouTube embedded player.",
+  "permissions": ["storage", "tabs", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": [
+    "https://music.youtube.com/*",
+    "https://www.googleapis.com/*",
+    "https://www.youtube.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "incognito": "split",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "YTM Audio-Only",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
