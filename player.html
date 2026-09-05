@@ -55,13 +55,41 @@
     .track:hover .rm { opacity: 1; }
     .track .rm:hover { background: #3a2020; color: #ff7676; }
     .track.dead { opacity: .4; text-decoration: line-through; }
+
+    #upnext { border-top: 1px solid #262626; flex: 0 0 auto; max-height: 34%; display: flex; flex-direction: column; }
+    /* An ID selector's display beats the UA's [hidden] rule, so restate it. */
+    #upnext[hidden] { display: none; }
+    #upnextHead { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px 6px; }
+    #upnextHead .left { display: flex; align-items: baseline; gap: 8px; }
+    #upnextCount { font-size: 11px; color: #6a6a6a; }
+    /* Auto-advance switch: a visually-hidden checkbox drives the track+knob, so
+       it keeps native focus/keyboard behaviour and the label-click target. */
+    .switch { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #9a9a9a; cursor: pointer; user-select: none; }
+    .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .switch .sw { width: 28px; height: 16px; border-radius: 999px; background: #3a3a3a; position: relative; transition: background .15s; flex: 0 0 auto; }
+    .switch .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #9a9a9a; transition: transform .15s, background .15s; }
+    .switch input:checked + .sw { background: #1e5aa8; }
+    .switch input:checked + .sw::after { transform: translateX(12px); background: #4da3ff; }
+    .switch input:focus-visible + .sw { outline: 2px solid #4da3ff; outline-offset: 2px; }
+    #upnextList { overflow-y: auto; padding: 0 8px 12px; }
+    .album { display: flex; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; }
+    .album:hover { background: #1c1c1c; }
+    .album.dragging { opacity: .5; }
+    .album .grip { color: #5a5a5a; font-size: 13px; cursor: grab; flex: 0 0 auto; }
+    .album:hover .grip { color: #8a8a8a; }
+    .album .num { width: 22px; text-align: right; color: #8a8a8a; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .album .meta { min-width: 0; flex: 1; }
+    .album .t { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .album .rm { flex: 0 0 auto; background: transparent; color: #6a6a6a; border: 0; border-radius: 6px; width: 24px; height: 24px; font-size: 12px; cursor: pointer; opacity: 0; }
+    .album:hover .rm { opacity: 1; }
+    .album .rm:hover { background: #3a2020; color: #ff7676; }
   </style>
 </head>
 <body>
   <div id="left">
     <header>
       <h1>YTM Audio-Only</h1>
-      <div class="sub" id="headerSub">Open the popup or click "Audio-only" on a YouTube Music album to start.</div>
+      <div class="sub" id="headerSub">Open the popup or click "Play now" on a YouTube Music album to start.</div>
     </header>
     <div id="stage">
       <div id="frameWrap">
@@ -90,6 +118,20 @@
     </div>
     <div id="info">No album loaded yet.</div>
     <div id="list"></div>
+    <div id="upnext" hidden>
+      <div id="upnextHead">
+        <div class="left">
+          <h2>Up next</h2>
+          <span id="upnextCount"></span>
+        </div>
+        <label class="switch" title="When the queue ends, start the next album automatically">
+          <input type="checkbox" id="autoAdvance" checked />
+          <span class="sw"></span>
+          auto-advance
+        </label>
+      </div>
+      <div id="upnextList"></div>
+    </div>
   </div>
   <script src="player.js"></script>
 </body>

@@ -16,7 +16,11 @@ let usingNative = false;     // no API key => embed plays the playlist itself
 let lastState = null;        // dedupe state events (onStateChange + infoDelivery)
 let currentTime = 0;         // last-known playback position (secs), from infoDelivery
 let currentPlaylistId = "";  // id of the first album loaded (for storage/display)
-let dragFrom = null;         // index being dragged during a reorder
+let currentTitle = "";       // album name, when the Data API gave us one
+let albumQueue = [];         // albums parked behind this one: [{playlistId,title,tracks}]
+let autoAdvanceAlbums = true; // pull the next album when the current queue ends
+let dragFrom = null;         // track index being dragged during a reorder
+let albumDragFrom = null;    // album-queue index being dragged
 const ownWriteIds = new Set(); // ids of our own currentQueue writes (to ignore their echoes)
 
 // --- Talking to the embed -------------------------------------------------
@@ -100,15 +104,15 @@ window.addEventListener("message", (e) => {
 
 function startQueue(queue, startIndex = 0) {
   currentPlaylistId = queue.playlistId || "";
-  updateOpenYtm();
+  currentTitle = queue.title || "";
   if (queue.tracks && queue.tracks.length) {
     usingNative = false;
     tracks = queue.tracks.map((t) => ({ ...t, dead: false }));
     index = Math.min(Math.max(0, startIndex), tracks.length - 1);
     document.getElementById("headerSub").textContent =
       `${tracks.length} track${tracks.length === 1 ? "" : "s"} loaded.`;
-    document.getElementById("info").textContent =
-      queue.playlistId ? `Playlist ${queue.playlistId}` : `${tracks.length} tracks`;
+    document.getElementById("info").textContent = queueLabel();
+    updateOpenYtm();
     renderList();
     highlight();
     updateNowPlaying();
@@ -116,6 +120,7 @@ function startQueue(queue, startIndex = 0) {
   } else if (queue.playlistId) {
     usingNative = true;
     tracks = [];
+    updateOpenYtm();
     document.getElementById("headerSub").textContent = "Playing playlist directly.";
     document.getElementById("info").textContent =
       "No Data API key set — playing the playlist directly, so the track list isn't shown. Add a key in Options for the full queue.";
@@ -140,9 +145,7 @@ function playIndex(i) {
 function handleState(s) {
   if (s === lastState) return;
   lastState = s;
-  if (s === ENDED && !usingNative) {
-    if (index < tracks.length - 1) playIndex(index + 1);
-  }
+  if (s === ENDED && !usingNative) advance();
   document.getElementById("playpause").textContent = s === PLAYING ? "⏸" : "▶";
   chrome.storage.local.set({ playerState: s });
 }
@@ -152,11 +155,86 @@ function handleError(code) {
   if (!usingNative && tracks[index]) {
     tracks[index].dead = true;
     renderList();
-    if (index < tracks.length - 1) playIndex(index + 1);
+    advance();
   }
 }
 
 // --- UI -------------------------------------------------------------------
+
+// How an album reads in the UI. The Data API gives us a real album name when the
+// extra playlists.list call succeeds; otherwise fall back to what the track list
+// itself tells us. "- Topic" is YouTube's suffix on art-track channels.
+function albumLabel({ title, tracks: ts }) {
+  const n = ts ? ts.length : 0;
+  const count = `${n} track${n === 1 ? "" : "s"}`;
+  if (title) return `${title} · ${count}`;
+  const channel = (ts && ts[0] && ts[0].channel || "").replace(/\s*-\s*Topic$/, "");
+  return channel ? `${count} · ${channel}` : count;
+}
+
+function queueLabel() {
+  if (currentTitle) return `${currentTitle} · ${tracks.length} tracks`;
+  if (tracks.length) return albumLabel({ title: "", tracks });
+  return currentPlaylistId ? `Playlist ${currentPlaylistId}` : "No album loaded yet.";
+}
+
+function renderAlbumQueue() {
+  const section = document.getElementById("upnext");
+  const list = document.getElementById("upnextList");
+  const count = document.getElementById("upnextCount");
+  const n = albumQueue.length;
+  section.hidden = !n;
+  count.textContent = n ? `${n} album${n === 1 ? "" : "s"}` : "";
+  list.innerHTML = "";
+  if (!n) return;
+  albumQueue.forEach((album, i) => {
+    const el = document.createElement("div");
+    el.className = "album";
+    el.draggable = true;
+    el.innerHTML =
+      `<div class="grip" title="Drag to reorder">⠿</div>` +
+      `<div class="num">${i + 1}</div>` +
+      `<div class="meta"><div class="t"></div></div>` +
+      `<button class="rm" title="Remove from the album queue">✕</button>`;
+    el.querySelector(".t").textContent = albumLabel(album);
+    el.querySelector(".rm").addEventListener("click", () => removeAlbum(i));
+    el.addEventListener("dragstart", (e) => {
+      albumDragFrom = i;
+      el.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    el.addEventListener("dragend", () => el.classList.remove("dragging"));
+    el.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+    el.addEventListener("drop", (e) => { e.preventDefault(); moveAlbum(albumDragFrom, i); albumDragFrom = null; });
+    list.appendChild(el);
+  });
+}
+
+// Reorder the pending albums by drag, mirroring moveTrack. Only what's WAITING
+// moves — the album playing now has already left albumQueue, so a drag can't
+// disturb it. Re-reads storage first: the background appends there, so a stale
+// local copy could drop an album queued mid-drag.
+async function moveAlbum(from, to) {
+  if (from == null || from === to) return;
+  const { albumQueue: stored } = await chrome.storage.local.get("albumQueue");
+  const queue = Array.isArray(stored) ? stored.slice() : [];
+  if (from < 0 || to < 0 || from >= queue.length || to >= queue.length) return;
+  const [moved] = queue.splice(from, 1);
+  queue.splice(to, 0, moved);
+  albumQueue = queue;
+  await chrome.storage.local.set({ albumQueue: queue });
+  renderAlbumQueue();
+}
+
+async function removeAlbum(i) {
+  const { albumQueue: stored } = await chrome.storage.local.get("albumQueue");
+  const queue = Array.isArray(stored) ? stored.slice() : [];
+  if (i < 0 || i >= queue.length) return;
+  queue.splice(i, 1);
+  albumQueue = queue;
+  await chrome.storage.local.set({ albumQueue: queue });
+  renderAlbumQueue();
+}
 
 function renderList() {
   const list = document.getElementById("list");
@@ -230,12 +308,35 @@ function moveTrack(from, to) {
   persistQueue();
 }
 
+// Is `next` the queue we're already playing, just longer? Same album, and every
+// track we hold still in the same position.
+function isAppendOf(next) {
+  if (usingNative || !tracks.length || !next.tracks) return false;
+  if ((next.playlistId || "") !== currentPlaylistId) return false;
+  if (next.tracks.length <= tracks.length) return false;
+  return tracks.every((t, i) => next.tracks[i] && next.tracks[i].videoId === t.videoId);
+}
+
+function adoptAppended(nextTracks) {
+  const extra = nextTracks.slice(tracks.length);
+  tracks = tracks.concat(extra.map((t) => ({ ...t, dead: false })));
+  renderList();
+  highlight();
+  updateNowPlaying();
+  document.getElementById("headerSub").textContent =
+    `${tracks.length} track${tracks.length === 1 ? "" : "s"} loaded.`;
+  document.getElementById("info").textContent = queueLabel();
+}
+
 function appendTracks(newTracks) {
   if (!newTracks || !newTracks.length) return;
   // Nothing real to merge into (native/direct playlist or empty queue):
   // start a fresh track-mode queue instead.
   if (usingNative || !tracks.length) {
-    startQueue({ playlistId: "", tracks: newTracks });
+    // Nothing to merge with, so these tracks ARE the queue — keep their own
+    // album id rather than blanking it (which would grey out "Open in YTM").
+    const first = newTracks[0] || {};
+    startQueue({ playlistId: first.playlistId || "", title: "", tracks: newTracks });
     persistQueue();
     return;
   }
@@ -246,6 +347,7 @@ function appendTracks(newTracks) {
   document.getElementById("headerSub").textContent =
     `${tracks.length} track${tracks.length === 1 ? "" : "s"} loaded.`;
   document.getElementById("info").textContent = `${tracks.length} tracks`;
+  updateOpenYtm();
   persistQueue();
 }
 
@@ -259,7 +361,10 @@ function persistQueue() {
   chrome.storage.local.set({
     currentQueue: {
       playlistId: currentPlaylistId,
-      tracks: tracks.map((t) => ({ videoId: t.videoId, title: t.title, channel: t.channel, thumb: t.thumb })),
+      title: currentTitle,
+      tracks: tracks.map((t) => ({
+        videoId: t.videoId, playlistId: t.playlistId, title: t.title, channel: t.channel, thumb: t.thumb
+      })),
       ts: Date.now(),
       writeId
     }
@@ -275,6 +380,7 @@ function highlight() {
 
 function updateNowPlaying() {
   const t = tracks[index];
+  updateOpenYtm();
   document.getElementById("nowTitle").textContent = t ? (t.title || t.videoId) : "Nothing playing";
   document.getElementById("nowChannel").textContent = t ? (t.channel || "") : "";
   chrome.storage.local.set({
@@ -319,7 +425,58 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-function doNext() { usingNative ? ytCommand("nextVideo") : playIndex(index + 1); }
+function doNext() { usingNative ? ytCommand("nextVideo") : advance(); }
+
+// Move past the current track. At the end of the queue this is where the album
+// queue takes over — but only when auto-advance is on, so the toggle governs
+// the Next button and the → key exactly as it governs a track ending.
+function advance() {
+  if (index < tracks.length - 1) { playIndex(index + 1); return; }
+  if (!autoAdvanceAlbums) return;
+  pullNextAlbum();
+}
+
+// Promote the head of the album queue to be the playing queue. Re-reads storage
+// rather than trusting the local copy: normal and incognito windows share
+// chrome.storage.local, so two player tabs could otherwise claim the same album.
+let pullingAlbum = false;
+async function pullNextAlbum() {
+  // The storage read below is async, so two triggers close together (ENDED
+  // landing while a mashed Next is still in flight) could both read the same
+  // queue and consume two albums, playing only the second.
+  if (pullingAlbum) return;
+  pullingAlbum = true;
+  try {
+    await pullNextAlbumInner();
+  } finally {
+    pullingAlbum = false;
+  }
+}
+
+async function pullNextAlbumInner() {
+  const { albumQueue: stored } = await chrome.storage.local.get("albumQueue");
+  const queue = Array.isArray(stored) ? stored.slice() : [];
+  const next = queue.shift();
+  if (!next) return;
+
+  albumQueue = queue;
+  const writeId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  ownWriteIds.add(writeId);
+  const currentQueue = {
+    playlistId: next.playlistId || "",
+    title: next.title || "",
+    tracks: next.tracks,
+    ts: Date.now(),
+    writeId
+  };
+  // startQueue defaults to index 0, and its updateNowPlaying() immediately
+  // rewrites nowPlaying for the new album — so the finished album's resume
+  // position is replaced, not inherited. Any player tab that reloads from here
+  // reads a nowPlaying that already matches this queue.
+  await chrome.storage.local.set({ albumQueue: queue, currentQueue });
+  startQueue(currentQueue);
+  renderAlbumQueue();
+}
 
 // Previous is position-based, like most music apps: if we're more than a few
 // seconds into the track, restart it; only when already near the start does it
@@ -342,30 +499,39 @@ function clearQueue() {
   ready = false;
   lastState = null;
   currentPlaylistId = "";
+  currentTitle = "";
+  albumQueue = [];
   updateOpenYtm();
+  renderAlbumQueue();
   renderList();
   document.getElementById("headerSub").textContent =
-    'Open the popup or click "Audio-only" on a YouTube Music album to start.';
+    'Open the popup or click "Play now" on a YouTube Music album to start.';
   document.getElementById("info").textContent = "No album loaded yet.";
   document.getElementById("nowTitle").textContent = "Nothing playing";
   document.getElementById("nowChannel").textContent = "";
   document.getElementById("playpause").textContent = "▶";
-  chrome.storage.local.remove(["currentQueue", "nowPlaying", "playerState"]);
+  chrome.storage.local.remove(["currentQueue", "nowPlaying", "playerState", "albumQueue"]);
 }
 
 document.getElementById("clear").addEventListener("click", clearQueue);
 
+// The album the PLAYING track came from. A queue can mix albums (appended
+// tracks, or an album pulled off the album queue), so the queue-wide id is only
+// a fallback — tracks expanded by newer versions carry their own.
+function playingPlaylistId() {
+  const t = tracks[index];
+  return (t && t.playlistId) || currentPlaylistId || "";
+}
+
 // Open the original album/playlist on YouTube Music in a new tab. Disabled when
-// no playlist id is known (e.g. a queue built from appended loose tracks).
+// no playlist id is known (e.g. an older stored queue of loose tracks).
 function updateOpenYtm() {
-  document.getElementById("openYtm").disabled = !currentPlaylistId;
+  document.getElementById("openYtm").disabled = !playingPlaylistId();
 }
 document.getElementById("openYtm").addEventListener("click", () => {
-  if (!currentPlaylistId) return;
-  window.open(
-    `https://music.youtube.com/playlist?list=${encodeURIComponent(currentPlaylistId)}`,
-    "_blank"
-  );
+  const id = playingPlaylistId();
+  if (!id) return;
+  window.open(`https://music.youtube.com/playlist?list=${encodeURIComponent(id)}`, "_blank");
 });
 
 // --- Remote controls (from popup, via background) -------------------------
@@ -384,19 +550,46 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // --- Queue source: storage -----------------------------------------------
 
-chrome.storage.local.get(["currentQueue", "nowPlaying"]).then(({ currentQueue, nowPlaying }) => {
-  if (currentQueue) {
-    // Resume at the last-played track after a player-tab reload.
-    const idx = nowPlaying && typeof nowPlaying.index === "number" ? nowPlaying.index : 0;
-    startQueue(currentQueue, idx);
-  }
+chrome.storage.local
+  .get(["currentQueue", "nowPlaying", "albumQueue", "autoAdvanceAlbums"])
+  .then(({ currentQueue, nowPlaying, albumQueue: stored, autoAdvanceAlbums: auto }) => {
+    albumQueue = Array.isArray(stored) ? stored : [];
+    autoAdvanceAlbums = auto !== false; // default on
+    document.getElementById("autoAdvance").checked = autoAdvanceAlbums;
+    renderAlbumQueue();
+    if (currentQueue) {
+      // Resume at the last-played track after a player-tab reload.
+      const idx = nowPlaying && typeof nowPlaying.index === "number" ? nowPlaying.index : 0;
+      startQueue(currentQueue, idx);
+    }
+  });
+
+document.getElementById("autoAdvance").addEventListener("change", (e) => {
+  autoAdvanceAlbums = e.target.checked;
+  chrome.storage.local.set({ autoAdvanceAlbums });
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.currentQueue && changes.currentQueue.newValue) {
+  if (area !== "local") return;
+  // The background pushes newly queued albums straight to storage.
+  if (changes.albumQueue) {
+    albumQueue = Array.isArray(changes.albumQueue.newValue) ? changes.albumQueue.newValue : [];
+    renderAlbumQueue();
+  }
+  if (changes.autoAdvanceAlbums) {
+    autoAdvanceAlbums = changes.autoAdvanceAlbums.newValue !== false;
+    document.getElementById("autoAdvance").checked = autoAdvanceAlbums;
+  }
+  if (changes.currentQueue && changes.currentQueue.newValue) {
     // Ignore echoes of the writes we made ourselves for in-place queue edits.
     const writeId = changes.currentQueue.newValue.writeId;
     if (writeId && ownWriteIds.has(writeId)) { ownWriteIds.delete(writeId); return; }
-    startQueue(changes.currentQueue.newValue);
+    // An append that reached storage rather than this tab (no player in the
+    // sender's context, and storage is shared across incognito) only ADDS to the
+    // end. Adopt the extra tracks in place — restarting via startQueue would
+    // reload the embed and jump the listener back to the top of the song.
+    const next = changes.currentQueue.newValue;
+    if (isAppendOf(next)) { adoptAppended(next.tracks); return; }
+    startQueue(next);
   }
 });

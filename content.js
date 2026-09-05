@@ -4,6 +4,7 @@
 (function () {
   const BTN_ID = "ytm-audio-only-btn";
   const ADD_ID = "ytm-audio-only-add-btn";
+  const ALBUM_ID = "ytm-audio-only-album-btn";
 
   function currentPlaylistId() {
     // Album/playlist pages carry ?list=... in the URL.
@@ -18,20 +19,32 @@
     return { text: res.count != null ? `Playing ${res.count}` : "Playing" };
   }
 
-  // Label the outcome of an ADD_PLAYLIST request. background.play() only truly
-  // appends when it expanded a track list (needs the Data API key) AND a player
-  // tab already exists in this context; otherwise it REPLACES the queue. Say so
-  // rather than claiming "Added" over a wiped queue. Mirrors popup.js.
+  // Label the outcome of an ADD_PLAYLIST request. Appending needs an expanded
+  // track list, so without a usable Data API key background.play() REPLACES the
+  // queue instead. Say so rather than claiming "Added" over a wiped queue.
+  // Mirrors popup.js.
   function addLabel(res) {
     if (res.usedFallback) {
       console.info("[YTM Audio-Only] No usable Data API key — replaced the queue instead of appending.");
       return { text: "Replaced", ms: 2600 };
     }
     if (res.appended) return { text: `Added ${res.count}` };
-    if (res.count != null) {
-      console.info("[YTM Audio-Only] No player tab to append to — replaced the queue.");
-      return { text: `Replaced ${res.count}`, ms: 2600 };
+    if (res.count != null) return { text: `Playing ${res.count}` };
+    return { text: "Replaced", ms: 2600 };
+  }
+
+  // Label the outcome of a QUEUE_ALBUM request. The album only gets parked when
+  // there's a track queue that can actually run out; with nothing playing (or no
+  // key) it just plays now.
+  function albumLabel(res) {
+    if (res.usedFallback) {
+      console.info("[YTM Audio-Only] No usable Data API key — played the album instead of queueing it.");
+      return { text: "Replaced", ms: 2600 };
     }
+    if (res.queuedAlbum) {
+      return { text: res.position > 1 ? `Queued #${res.position}` : "Queued album" };
+    }
+    if (res.count != null) return { text: `Playing ${res.count}` };
     return { text: "Replaced", ms: 2600 };
   }
 
@@ -84,22 +97,26 @@
     });
   }
 
+  // Stacked bottom-up, most-used closest to the corner: play now, queue the
+  // album whole, merge its tracks into what's playing.
+  const BUTTONS = [
+    { id: BTN_ID, text: "▶ Play now", bottom: "90px", bg: "#fff", fg: "#111",
+      type: "PLAY_PLAYLIST", label: playLabel },
+    { id: ALBUM_ID, text: "＋ Add album", bottom: "140px", bg: "#272727", fg: "#eee",
+      type: "QUEUE_ALBUM", label: albumLabel },
+    { id: ADD_ID, text: "＋ Add tracks", bottom: "190px", bg: "#272727", fg: "#eee",
+      type: "ADD_PLAYLIST", label: addLabel }
+  ];
+
   function ensureButton() {
-    if (!document.getElementById(BTN_ID)) {
+    for (const spec of BUTTONS) {
+      if (document.getElementById(spec.id)) continue;
       const btn = document.createElement("button");
-      btn.id = BTN_ID;
-      btn.textContent = "▶ Audio-only";
-      styleButton(btn, "90px", "#fff", "#111");
-      btn.addEventListener("click", () => sendPlaylist(btn, "PLAY_PLAYLIST", playLabel));
+      btn.id = spec.id;
+      btn.textContent = spec.text;
+      styleButton(btn, spec.bottom, spec.bg, spec.fg);
+      btn.addEventListener("click", () => sendPlaylist(btn, spec.type, spec.label));
       document.body.appendChild(btn);
-    }
-    if (!document.getElementById(ADD_ID)) {
-      const add = document.createElement("button");
-      add.id = ADD_ID;
-      add.textContent = "＋ Add to queue";
-      styleButton(add, "140px", "#272727", "#eee");
-      add.addEventListener("click", () => sendPlaylist(add, "ADD_PLAYLIST", addLabel));
-      document.body.appendChild(add);
     }
   }
 
@@ -118,10 +135,10 @@
     if (id) {
       ensureButton();
     } else {
-      const btn = document.getElementById(BTN_ID);
-      const add = document.getElementById(ADD_ID);
-      if (btn) btn.remove();
-      if (add) add.remove();
+      for (const spec of BUTTONS) {
+        const btn = document.getElementById(spec.id);
+        if (btn) btn.remove();
+      }
     }
   }
 

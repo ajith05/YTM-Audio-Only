@@ -31,19 +31,32 @@ function installDnrRules() {
 chrome.runtime.onInstalled.addListener(installDnrRules);
 chrome.runtime.onStartup.addListener(installDnrRules);
 
+// The three destinations an album can go to. "replace" wipes the queue and plays
+// now; "appendTracks" concatenates onto the live track list; "queueAlbum" parks
+// the album whole in albumQueue, to become the queue when the current one ends.
+const MODES = {
+  PLAY_INPUT: "replace",
+  PLAY_PLAYLIST: "replace",
+  ADD_INPUT: "appendTracks",
+  ADD_PLAYLIST: "appendTracks",
+  QUEUE_ALBUM_INPUT: "queueAlbum",
+  QUEUE_ALBUM: "queueAlbum"
+};
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       const ctx = await resolveContext(sender);
-      if (msg.type === "PLAY_INPUT" || msg.type === "ADD_INPUT") {
+      const mode = MODES[msg.type];
+      if (msg.type.endsWith("_INPUT")) {
         const playlistId = extractPlaylistId(msg.input);
         if (!playlistId) {
           sendResponse({ ok: false, error: "Couldn't find a playlist/album ID in that input." });
           return;
         }
-        await play(playlistId, ctx, sendResponse, msg.type === "ADD_INPUT");
-      } else if (msg.type === "PLAY_PLAYLIST" || msg.type === "ADD_PLAYLIST") {
-        await play(msg.playlistId, ctx, sendResponse, msg.type === "ADD_PLAYLIST");
+        await play(playlistId, ctx, sendResponse, mode);
+      } else if (mode) {
+        await play(msg.playlistId, ctx, sendResponse, mode);
       } else if (msg.type === "CONTROL") {
         if (msg.action === "clear") {
           await chrome.storage.local.remove(["currentQueue", "nowPlaying", "playerState"]);
@@ -65,14 +78,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // keep the channel open for async sendResponse
 });
 
-async function play(playlistId, ctx, sendResponse, append = false) {
+async function play(playlistId, ctx, sendResponse, mode = "replace") {
   const { apiKey } = await chrome.storage.local.get("apiKey");
   let tracks = null;
+  let title = null;
   let usedFallback = false;
   if (apiKey) {
     try {
       tracks = await expandPlaylist(playlistId, apiKey);
       if (!tracks.length) throw new Error("No playable tracks found in this playlist.");
+      // Best-effort: the album name isn't in the playlistItems response, so it
+      // costs a second request. A failure here must never fail the whole
+      // operation — the UI falls back to "<n> tracks · <channel>".
+      title = await fetchPlaylistTitle(playlistId, apiKey);
     } catch (e) {
       // Invalid/expired key, exhausted quota, network failure, empty result —
       // don't fail the request; fall back to the keyless path (the IFrame player
@@ -83,18 +101,55 @@ async function play(playlistId, ctx, sendResponse, append = false) {
     }
   }
 
-  // Append: if we have an expanded track list and a player already exists in
-  // this context, push the tracks onto its live queue instead of replacing it.
-  // (Direct-playlist mode — no API key — can't merge, so it falls through to a
-  // normal replace.)
-  if (append && tracks) {
-    const incognito = !!ctx.incognito;
-    const players = await getPlayerTabs();
-    const match = players.find((t) => !!t.incognito === incognito);
-    if (match) {
-      await chrome.tabs.sendMessage(match.id, { type: "APPEND_TRACKS", tracks });
+  // Without an expanded track list there's nothing to merge or park, so both
+  // add-modes degrade to a plain replace (keyless playback can't do either).
+  if (tracks && mode !== "replace") {
+    const current = await currentTrackQueue();
+
+    if (mode === "appendTracks") {
+      // Prefer the live player when one exists: it owns the queue and writes it
+      // back itself, so going through storage here could race its persistQueue().
+      // A tab that's still loading has no listener yet, so this can throw —
+      // fall through to the storage merge below rather than failing the click.
+      const match = await matchingPlayerTab(ctx);
+      let delivered = false;
+      if (match) {
+        try {
+          await chrome.tabs.sendMessage(match.id, { type: "APPEND_TRACKS", tracks });
+          delivered = true;
+        } catch (e) {
+          console.warn("Player tab didn't take APPEND_TRACKS; merging via storage:", e);
+        }
+      }
+      if (delivered) {
+        await ensurePlayerTab(ctx);
+        sendResponse({ ok: true, count: tracks.length, title, appended: true, usedFallback });
+        return;
+      }
+      // No live player took it, but a real track queue is sitting in storage:
+      // merge into it there and let the player pick it up when it opens.
+      if (current) {
+        await mergeIntoStoredQueue(current, tracks);
+        await ensurePlayerTab(ctx);
+        sendResponse({ ok: true, count: tracks.length, title, appended: true, usedFallback });
+        return;
+      }
+      // Nothing to append to — fall through to a replace.
+    }
+
+    if (mode === "queueAlbum" && current) {
+      // Something is playing that can actually exhaust, so park this album
+      // behind it. (With no such queue we fall through and just play it now.)
+      const { albumQueue } = await chrome.storage.local.get("albumQueue");
+      const queue = Array.isArray(albumQueue) ? albumQueue : [];
+      queue.push({ playlistId, title, tracks, ts: Date.now() });
+      await chrome.storage.local.set({ albumQueue: queue });
+      // Make sure a player exists to eventually drain it — without one the album
+      // would sit queued behind a queue that never plays.
       await ensurePlayerTab(ctx);
-      sendResponse({ ok: true, count: tracks.length, appended: true, usedFallback });
+      sendResponse({
+        ok: true, count: tracks.length, title, queuedAlbum: true, position: queue.length
+      });
       return;
     }
   }
@@ -104,11 +159,44 @@ async function play(playlistId, ctx, sendResponse, append = false) {
   // previous album's position. (A plain tab reload keeps currentQueue, so its
   // nowPlaying survives and reload-resume still works.)
   // No key: fall back to letting the IFrame player load the playlist directly.
-  const queue = { playlistId, tracks, ts: Date.now() };
+  const queue = { playlistId, title, tracks, ts: Date.now() };
   await chrome.storage.local.remove(["nowPlaying", "playerState"]);
   await chrome.storage.local.set({ currentQueue: queue });
   await ensurePlayerTab(ctx);
-  sendResponse({ ok: true, count: tracks ? tracks.length : null, usedFallback });
+  sendResponse({ ok: true, count: tracks ? tracks.length : null, title, usedFallback });
+}
+
+// The stored queue, but only when it's a real track list. A keyless (direct
+// playlist) queue reports no tracks: it never reaches an end-of-queue event, so
+// nothing can be appended to it or parked behind it.
+async function currentTrackQueue() {
+  const { currentQueue } = await chrome.storage.local.get("currentQueue");
+  if (currentQueue && Array.isArray(currentQueue.tracks) && currentQueue.tracks.length) {
+    return currentQueue;
+  }
+  return null;
+}
+
+// Append to the stored queue when no live player took the message. The player
+// tags its own writes with a writeId and ignores their echoes; ours needs no tag
+// (a player in the other incognito context SHOULD reload the queue) but it must
+// keep nowPlaying valid — appending leaves the playing index untouched, so the
+// resume position still points at the right track.
+async function mergeIntoStoredQueue(current, tracks) {
+  await chrome.storage.local.set({
+    currentQueue: {
+      ...current,
+      tracks: current.tracks.concat(tracks),
+      ts: Date.now(),
+      writeId: undefined
+    }
+  });
+}
+
+async function matchingPlayerTab(ctx) {
+  const incognito = !!ctx.incognito;
+  const players = await getPlayerTabs();
+  return players.find((t) => !!t.incognito === incognito) || null;
 }
 
 // --- Request context (which window opened the request) --------------------
@@ -186,6 +274,7 @@ async function expandPlaylist(playlistId, apiKey) {
       if (title === "Deleted video" || title === "Private video") continue;
       tracks.push({
         videoId,
+        playlistId,
         title,
         channel: it.snippet?.videoOwnerChannelTitle || it.snippet?.channelTitle || "",
         thumb: it.snippet?.thumbnails?.default?.url || ""
@@ -194,6 +283,25 @@ async function expandPlaylist(playlistId, apiKey) {
     pageToken = data.nextPageToken || "";
   } while (pageToken);
   return tracks;
+}
+
+// The album name lives on the playlist resource, not on its items, so it needs
+// its own request (1 more quota unit per album). Returns null rather than
+// throwing: a missing title only costs a nicer label.
+async function fetchPlaylistTitle(playlistId, apiKey) {
+  try {
+    const url = new URL("https://www.googleapis.com/youtube/v3/playlists");
+    url.searchParams.set("part", "snippet");
+    url.searchParams.set("id", playlistId);
+    url.searchParams.set("key", apiKey);
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.items?.[0]?.snippet?.title || null;
+  } catch (e) {
+    console.warn("Couldn't fetch the playlist title:", e);
+    return null;
+  }
 }
 
 // --- Input parsing --------------------------------------------------------

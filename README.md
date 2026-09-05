@@ -12,7 +12,11 @@ its own tab, so audio keeps going while you browse.
 ## Features
 
 - Play any YouTube Music album or playlist as audio-only in a dedicated player tab.
-- A floating **▶ Audio-only** / **＋ Add to queue** button on `music.youtube.com` album pages.
+- Floating **▶ Play now** / **＋ Add album** / **＋ Add tracks** buttons on `music.youtube.com`
+  album pages.
+- Line albums up back-to-back: **＋ Add album** keeps the current queue playing and starts the
+  next album when it ends. Queued albums can be dragged into a different order or dropped
+  individually.
 - Paste an album/playlist URL or id into the toolbar popup.
 - Queue with prev / next, play-pause, and a visible track list.
 - Keyboard shortcuts on the player tab:
@@ -32,12 +36,24 @@ There's no build step.
 
 ## Usage
 
-**From YouTube Music:** open an album or playlist. A floating **▶ Audio-only** button appears —
-click it to start audio-only playback in the player tab, or **＋ Add to queue** to append it to
-what's already playing.
+**From YouTube Music:** open an album or playlist. Three floating buttons appear:
+
+- **▶ Play now** — start this album immediately, replacing whatever was queued.
+- **＋ Add album** — keep playing what's on now; this album starts when the queue runs out.
+  Albums stack up, and the player's **Up next** list shows what's waiting.
+- **＋ Add tracks** — merge this album's tracks onto the end of the current track list.
+
+The difference between the last two: **Add tracks** blends the album into the current queue,
+while **Add album** keeps it whole and separate, to play after.
 
 **From the popup:** click the toolbar icon, paste an album/playlist URL or id, and hit
-**Play audio-only** (or **Add to queue**).
+**Play now**, **Add album**, or **Add tracks**.
+
+In the player tab, the **Up next** panel lists queued albums. Drag them by the ⠿ grip to reorder,
+or drop one with ✕ — just like the track list. (The album playing now has already left the panel,
+so reordering never disturbs it.) Its **auto-advance** switch, when off, stops the queue at the
+end of the current album — the Next button and the → key stop there too, instead of rolling into
+the next album.
 
 ## Data API key (optional)
 
@@ -45,7 +61,7 @@ The extension works out of the box in a **keyless** mode: it hands the album pla
 to the embedded player and lets it play through. There's no visible track list in this mode.
 
 Adding a free **YouTube Data API v3** key unlocks the richer experience — a full, navigable
-track list built from the playlist:
+track list built from the playlist, album names, and the two queueing buttons:
 
 1. In the [Google Cloud Console](https://console.cloud.google.com/), enable **YouTube Data API
    v3**, then create an API key.
@@ -55,8 +71,9 @@ track list built from the playlist:
 If the key is missing, invalid, or its quota is exhausted, playback automatically falls back to
 the keyless mode.
 
-Note that **＋ Add to queue** can only append when a key is set *and* a player tab is already
-open. Otherwise it replaces the current queue, and the button says "Replaced" to make that clear.
+Note that **＋ Add album** and **＋ Add tracks** both need a key — building a track list is what
+makes queueing possible. Without one they fall back to playing the album right away, and the
+button says "Replaced" to make that clear.
 
 **Privacy:** your API key is stored locally in your browser (`chrome.storage.local`) and is only
 ever sent to Google's YouTube Data API to look up playlist tracks. The extension has no server,

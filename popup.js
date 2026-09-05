@@ -17,6 +17,7 @@ $("play").addEventListener("click", async () => {
   const res = await send({ type: "PLAY_INPUT", input });
   if (res && res.ok) {
     if (res.usedFallback) setMsg("API key failed — playing playlist directly.", "ok");
+    else if (res.title) setMsg(`Playing ${res.title} — ${res.count} tracks.`, "ok");
     else setMsg(res.count != null ? `Playing ${res.count} tracks.` : "Playing playlist.", "ok");
   } else {
     setMsg((res && res.error) || "Failed to start playback.", "err");
@@ -29,12 +30,31 @@ $("add").addEventListener("click", async () => {
   setMsg("Adding…");
   const res = await send({ type: "ADD_INPUT", input });
   if (res && res.ok) {
-    if (res.usedFallback) setMsg("API key failed — playing playlist directly.", "ok");
+    // Appending needs an expanded track list, so a keyless fallback replaces the
+    // queue instead. Say so rather than claiming we added. Mirrors content.js.
+    if (res.usedFallback) setMsg("No usable Data API key — replaced the queue instead.", "ok");
     else if (res.appended) setMsg(`Added ${res.count} tracks to the queue.`, "ok");
     else if (res.count != null) setMsg(`Playing ${res.count} tracks.`, "ok");
-    else setMsg("Playing playlist (add needs a Data API key).", "ok");
+    else setMsg("No usable Data API key — replaced the queue instead.", "ok");
   } else {
     setMsg((res && res.error) || "Failed to add to queue.", "err");
+  }
+});
+
+$("album").addEventListener("click", async () => {
+  const input = $("input").value.trim();
+  if (!input) { setMsg("Paste an album/playlist URL or ID first.", "err"); return; }
+  setMsg("Queueing…");
+  const res = await send({ type: "QUEUE_ALBUM_INPUT", input });
+  if (res && res.ok) {
+    if (res.usedFallback) setMsg("No usable Data API key — replaced the queue instead.", "ok");
+    else if (res.queuedAlbum) {
+      const name = res.title || `${res.count} tracks`;
+      setMsg(`Queued ${name} — plays after the current album.`, "ok");
+    } else if (res.count != null) setMsg(`Playing ${res.count} tracks.`, "ok");
+    else setMsg("No usable Data API key — replaced the queue instead.", "ok");
+  } else {
+    setMsg((res && res.error) || "Failed to queue the album.", "err");
   }
 });
 

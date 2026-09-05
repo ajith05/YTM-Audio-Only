@@ -38,11 +38,44 @@ those we just play what's there. The album case (`OLAK5uy_`) is what this is bui
 Both the popup and the injected on-page buttons route through `background.play()`, so both
 inherit the fallback.
 
-Append (`ADD_PLAYLIST` / `ADD_INPUT`) only truly appends when **both** an expanded track list
-exists **and** a player tab already exists in the matching incognito context. Otherwise
-`play()` falls through to a full replace. Both UIs read `appended` / `usedFallback` off the
-response and say "Replaced" rather than claiming "Added" over a wiped queue — don't reintroduce
-a fixed success label.
+## Three destinations
+
+`background.play()` takes a `mode` (see the `MODES` table mapping message types to it):
+
+- `replace` — wipe the queue, play now (`PLAY_PLAYLIST` / `PLAY_INPUT`).
+- `appendTracks` — concatenate onto the live track list (`ADD_PLAYLIST` / `ADD_INPUT`).
+- `queueAlbum` — park the album whole in `albumQueue`, to become the queue when the current
+  one runs out (`QUEUE_ALBUM` / `QUEUE_ALBUM_INPUT`).
+
+Both add-modes need an expanded track list, so **keyless playback degrades them to a replace**
+— that's the only remaining silent-replace path. The UIs read `appended` / `queuedAlbum` /
+`usedFallback` off the response and say "Replaced" rather than claiming "Added" over a wiped
+queue; don't reintroduce a fixed success label.
+
+Beyond that, each add-mode has one more fall-through, and both are *correct*, not gaps:
+`appendTracks` with nothing playing and `queueAlbum` with nothing that can ever end (no queue,
+or a keyless one) both just play the album — there is nothing to append to or wait behind.
+
+Appending prefers messaging a live player tab, since the player owns the queue and persists it
+itself; going through storage while it's running would race its `persistQueue()`. Only when no
+tab takes the message does the background merge into `currentQueue` in storage. The player
+recognises such a write via `isAppendOf()` and adopts the new tracks **in place** — calling
+`startQueue()` would reload the embed and restart the playing song.
+
+The album queue is drained by the player, not the background: `advance()` (used by both the
+ENDED handler and the Next button) calls `pullNextAlbum()` at the end of the queue. It re-reads
+`albumQueue` from storage before shifting, because normal and incognito windows share storage
+and could otherwise claim the same album. `autoAdvanceAlbums` gates this for *both* automatic
+and manual advance — with it off, Next stops at the last track.
+
+`moveAlbum()` mirrors `moveTrack()` for the Up-next panel, but re-reads `albumQueue` from storage
+before splicing — the background appends there, so a stale local copy could drop an album queued
+mid-drag. It touches only `albumQueue`, never the playing track list: the current album has
+already left the queue, so a drag can't disturb it. Album drags use their own `albumDragFrom`
+cursor, kept separate from the track list's `dragFrom`. The player's queue rows use `.track`, so
+the auto-advance switch's knob is `.sw` — reusing `.track` there would inherit the row padding.
+`#upnext[hidden]` restates `display: none` because the `#upnext` ID selector's `display: flex`
+otherwise beats the UA's `[hidden]` rule and leaves an emptied panel on screen.
 
 ## Architecture
 
@@ -51,13 +84,19 @@ a fixed success label.
   there before touching them).
 - [player.html](player.html) / [player.js](player.js) — the persistent player tab: hosts the
   IFrame player, owns the queue + UI, keyboard shortcuts.
-- [content.js](content.js) — injected on `music.youtube.com`: floating "Audio-only" / "Add to
-  queue" buttons that send the current `?list=` id to the background.
+- [content.js](content.js) — injected on `music.youtube.com`: floating "Play now" / "Add album" /
+  "Add tracks" buttons that send the current `?list=` id to the background.
 - [popup.html](popup.html) / [popup.js](popup.js) — paste a URL/id, transport controls.
 - [options.html](options.html) / [options.js](options.js) — store the Data API key.
 
-Cross-component state lives in `chrome.storage.local`: `currentQueue`, `nowPlaying`,
-`playerState` (a YouTube player-state int; `PLAYING === 1`), `apiKey`.
+Cross-component state lives in `chrome.storage.local`: `currentQueue`, `albumQueue` (a FIFO of
+pending albums), `autoAdvanceAlbums`, `nowPlaying`, `playerState` (a YouTube player-state int;
+`PLAYING === 1`), `apiKey`.
+
+Tracks carry their own `playlistId`, so "↗ YTM" opens the album the *playing* track came from —
+a queue can mix albums via appends or an album-queue advance, and the queue-wide id would be
+wrong. Album names cost a second Data API call (`playlists.list`); `fetchPlaylistTitle()` returns
+null on any failure and the UI falls back to `<n> tracks · <channel>`.
 
 ## Dev / test workflow
 
