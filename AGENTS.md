@@ -47,10 +47,19 @@ inherit the fallback.
 - `queueAlbum` — park the album whole in `albumQueue`, to become the queue when the current
   one runs out (`QUEUE_ALBUM` / `QUEUE_ALBUM_INPUT`).
 
-Both add-modes need an expanded track list, so **keyless playback degrades them to a replace**
-— that's the only remaining silent-replace path. The UIs read `appended` / `queuedAlbum` /
-`usedFallback` off the response and say "Replaced" rather than claiming "Added" over a wiped
-queue; don't reintroduce a fixed success label.
+Both add-modes need an expanded track list, so **keyless playback degrades them to a replace**.
+Rather than expose that, both entry points are **gated on `apiKey` being present**: content.js
+marks their `BUTTONS` specs `needsKey: true` and skips them in `ensureButton()`, and popup.js
+hides `#album` / `#add` in `applyKey()`. Both read `apiKey` on load *and* subscribe to
+`chrome.storage.onChanged` — options is a separate page, so without the subscription a key saved
+there wouldn't surface the buttons until the next navigation. content.js `update()` therefore
+removes unwanted buttons before adding wanted ones, so clearing a key takes them away live.
+
+Presence is all that can be gated on; validity is only knowable at request time. So a stored but
+rejected key still reaches the degraded replace, and the `usedFallback` branches in the UIs stay
+as the second line of defence — they read `appended` / `queuedAlbum` / `usedFallback` off the
+response and say "Replaced" rather than claiming "Added" over a wiped queue. Don't delete those
+branches as dead, and don't reintroduce a fixed success label.
 
 Beyond that, each add-mode has one more fall-through, and both are *correct*, not gaps:
 `appendTracks` with nothing playing and `queueAlbum` with nothing that can ever end (no queue,
@@ -85,7 +94,8 @@ otherwise beats the UA's `[hidden]` rule and leaves an emptied panel on screen.
 - [player.html](player.html) / [player.js](player.js) — the persistent player tab: hosts the
   IFrame player, owns the queue + UI, keyboard shortcuts.
 - [content.js](content.js) — injected on `music.youtube.com`: floating "Play now" / "Add album" /
-  "Add tracks" buttons that send the current `?list=` id to the background.
+  "Add tracks" buttons that send the current `?list=` id to the background. The two add buttons
+  only render when an `apiKey` is stored.
 - [popup.html](popup.html) / [popup.js](popup.js) — paste a URL/id, transport controls.
 - [options.html](options.html) / [options.js](options.js) — store the Data API key.
 

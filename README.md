@@ -13,7 +13,7 @@ its own tab, so audio keeps going while you browse.
 
 - Play any YouTube Music album or playlist as audio-only in a dedicated player tab.
 - Floating **▶ Play now** / **＋ Add album** / **＋ Add tracks** buttons on `music.youtube.com`
-  album pages.
+  album pages. The two **＋** buttons appear once a Data API key is set (see below).
 - Line albums up back-to-back: **＋ Add album** keeps the current queue playing and starts the
   next album when it ends. Queued albums can be dragged into a different order or dropped
   individually.
@@ -36,7 +36,8 @@ There's no build step.
 
 ## Usage
 
-**From YouTube Music:** open an album or playlist. Three floating buttons appear:
+**From YouTube Music:** open an album or playlist. Floating buttons appear — all three with a
+Data API key set, otherwise just **▶ Play now**:
 
 - **▶ Play now** — start this album immediately, replacing whatever was queued.
 - **＋ Add album** — keep playing what's on now; this album starts when the queue runs out.
@@ -47,7 +48,7 @@ The difference between the last two: **Add tracks** blends the album into the cu
 while **Add album** keeps it whole and separate, to play after.
 
 **From the popup:** click the toolbar icon, paste an album/playlist URL or id, and hit
-**Play now**, **Add album**, or **Add tracks**.
+**Play now**, **Add album**, or **Add tracks**. The latter two show up only with a key set.
 
 In the player tab, the **Up next** panel lists queued albums. Drag them by the ⠿ grip to reorder,
 or drop one with ✕ — just like the track list. (The album playing now has already left the panel,
@@ -72,8 +73,10 @@ If the key is missing, invalid, or its quota is exhausted, playback automaticall
 the keyless mode.
 
 Note that **＋ Add album** and **＋ Add tracks** both need a key — building a track list is what
-makes queueing possible. Without one they fall back to playing the album right away, and the
-button says "Replaced" to make that clear.
+makes queueing possible. With no key stored they're hidden entirely, on the album page and in
+the popup, so there's nothing that looks like it should queue but can't. If a key *is* stored but
+gets rejected at request time, they fall back to playing the album right away and the button says
+"Replaced" to make that clear.
 
 **Privacy:** your API key is stored locally in your browser (`chrome.storage.local`) and is only
 ever sent to Google's YouTube Data API to look up playlist tracks. The extension has no server,

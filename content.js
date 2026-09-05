@@ -23,6 +23,9 @@
   // track list, so without a usable Data API key background.play() REPLACES the
   // queue instead. Say so rather than claiming "Added" over a wiped queue.
   // Mirrors popup.js.
+  //
+  // The button is hidden when no key is stored, so the usedFallback branch is
+  // now only reachable with a key that's set but rejected at request time.
   function addLabel(res) {
     if (res.usedFallback) {
       console.info("[YTM Audio-Only] No usable Data API key — replaced the queue instead of appending.");
@@ -34,8 +37,9 @@
   }
 
   // Label the outcome of a QUEUE_ALBUM request. The album only gets parked when
-  // there's a track queue that can actually run out; with nothing playing (or no
-  // key) it just plays now.
+  // there's a track queue that can actually run out; with nothing playing it
+  // just plays now. As with addLabel, usedFallback here means a stored key that
+  // failed, not a missing one.
   function albumLabel(res) {
     if (res.usedFallback) {
       console.info("[YTM Audio-Only] No usable Data API key — played the album instead of queueing it.");
@@ -98,18 +102,27 @@
   }
 
   // Stacked bottom-up, most-used closest to the corner: play now, queue the
-  // album whole, merge its tracks into what's playing.
+  // album whole, merge its tracks into what's playing. Both add modes need an
+  // expanded track list, which needs the Data API key — without one they'd
+  // silently replace the queue, so they're hidden until a key is stored.
   const BUTTONS = [
     { id: BTN_ID, text: "▶ Play now", bottom: "90px", bg: "#fff", fg: "#111",
       type: "PLAY_PLAYLIST", label: playLabel },
     { id: ALBUM_ID, text: "＋ Add album", bottom: "140px", bg: "#272727", fg: "#eee",
-      type: "QUEUE_ALBUM", label: albumLabel },
+      type: "QUEUE_ALBUM", label: albumLabel, needsKey: true },
     { id: ADD_ID, text: "＋ Add tracks", bottom: "190px", bg: "#272727", fg: "#eee",
-      type: "ADD_PLAYLIST", label: addLabel }
+      type: "ADD_PLAYLIST", label: addLabel, needsKey: true }
   ];
+
+  let hasKey = false;
+
+  function wanted(spec) {
+    return !spec.needsKey || hasKey;
+  }
 
   function ensureButton() {
     for (const spec of BUTTONS) {
+      if (!wanted(spec)) continue;
       if (document.getElementById(spec.id)) continue;
       const btn = document.createElement("button");
       btn.id = spec.id;
@@ -131,15 +144,15 @@
   }
 
   function update() {
-    const id = currentPlaylistId();
-    if (id) {
-      ensureButton();
-    } else {
-      for (const spec of BUTTONS) {
-        const btn = document.getElementById(spec.id);
-        if (btn) btn.remove();
-      }
+    const onAlbum = !!currentPlaylistId();
+    // Drop anything that shouldn't be showing first, so a key being cleared
+    // mid-session takes the add buttons away rather than leaving them stale.
+    for (const spec of BUTTONS) {
+      if (onAlbum && wanted(spec)) continue;
+      const btn = document.getElementById(spec.id);
+      if (btn) btn.remove();
     }
+    if (onAlbum) ensureButton();
   }
 
   // YTM is an SPA; URL changes without full reloads. Poll for changes.
@@ -148,5 +161,18 @@
     if (location.href !== last) { last = location.href; update(); }
   }, 1000);
 
+  // Options is a separate page, so without this listener a key saved there
+  // wouldn't surface the add buttons until the next navigation.
+  chrome.storage.onChanged.addListener((c, area) => {
+    if (area !== "local" || !c.apiKey) return;
+    hasKey = !!c.apiKey.newValue;
+    update();
+  });
+
+  // Draw once with what we know, then again once the stored key comes back.
   update();
+  chrome.storage.local.get("apiKey").then(({ apiKey }) => {
+    hasKey = !!apiKey;
+    update();
+  });
 })();

@@ -65,6 +65,18 @@ $("clear").addEventListener("click", async () => {
 });
 $("opts").addEventListener("click", () => chrome.runtime.openOptionsPage());
 
+// Both add actions need an expanded track list, which needs the Data API key.
+// Without one they would quietly replace the queue, so hide them and point the
+// options link at the reason they are missing.
+function applyKey(hasKey) {
+  $("album").hidden = !hasKey;
+  $("add").hidden = !hasKey;
+  $("opts").textContent = hasKey
+    ? "Set Data API key (Options)"
+    : "Add a Data API key to queue albums";
+}
+chrome.storage.local.get("apiKey").then(({ apiKey }) => applyKey(!!apiKey));
+
 $("prev").addEventListener("click", () => send({ type: "CONTROL", action: "prev" }));
 $("next").addEventListener("click", () => send({ type: "CONTROL", action: "next" }));
 
@@ -110,4 +122,5 @@ chrome.storage.onChanged.addListener((c, area) => {
   if (area !== "local") return;
   if (c.nowPlaying) refreshNow();
   if (c.playerState) setPlayPause(c.playerState.newValue === PLAYING);
+  if (c.apiKey) applyKey(!!c.apiKey.newValue);
 });
