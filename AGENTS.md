@@ -38,6 +38,12 @@ those we just play what's there. The album case (`OLAK5uy_`) is what this is bui
 Both the popup and the injected on-page buttons route through `background.play()`, so both
 inherit the fallback.
 
+Append (`ADD_PLAYLIST` / `ADD_INPUT`) only truly appends when **both** an expanded track list
+exists **and** a player tab already exists in the matching incognito context. Otherwise
+`play()` falls through to a full replace. Both UIs read `appended` / `usedFallback` off the
+response and say "Replaced" rather than claiming "Added" over a wiped queue — don't reintroduce
+a fixed success label.
+
 ## Architecture
 
 - [background.js](background.js) — service worker: message router, Data API expansion, player-tab
@@ -59,4 +65,7 @@ Cross-component state lives in `chrome.storage.local`: `currentQueue`, `nowPlayi
 - **After reloading the extension, also reload any open music.youtube.com tab** — the previous
   content script orphans ("Extension context invalidated") and its buttons stop working.
 - `manifest.json` uses `"incognito": "split"`, so a normal-window player and an incognito player
-  are separate instances; background.js matches player tabs by incognito context.
+  are separate instances; background.js matches player tabs by incognito context. Note that
+  `chrome.storage.local` is **shared** across both, despite split mode — the Data API key set in
+  a normal window is already visible in incognito, and `currentQueue` / `nowPlaying` are written
+  to the same keys by both.

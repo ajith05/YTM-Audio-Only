@@ -55,6 +55,9 @@ track list built from the playlist:
 If the key is missing, invalid, or its quota is exhausted, playback automatically falls back to
 the keyless mode.
 
+Note that **＋ Add to queue** can only append when a key is set *and* a player tab is already
+open. Otherwise it replaces the current queue, and the button says "Replaced" to make that clear.
+
 **Privacy:** your API key is stored locally in your browser (`chrome.storage.local`) and is only
 ever sent to Google's YouTube Data API to look up playlist tracks. The extension has no server,
 no telemetry, and no analytics.
