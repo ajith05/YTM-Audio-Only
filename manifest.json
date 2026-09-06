@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YTM Audio-Only",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Play audio-only (art-track) versions of YouTube Music albums via the official YouTube embedded player.",
   "permissions": ["storage", "tabs", "declarativeNetRequestWithHostAccess"],
   "host_permissions": [
