@@ -48,8 +48,10 @@ iframe.addEventListener("load", onIframeLoad);
 // Load a URL by REPLACING the iframe element rather than assigning to its src.
 // Mutating an existing iframe's src pushes an entry onto the tab's session
 // history (enabling the Back button); a freshly inserted iframe's first
-// navigation is a replacement and adds no history entry. Per-track advances
-// still use the loadVideoById command (no navigation), so they're unaffected.
+// navigation is a replacement and adds no history entry. Callers reach this only
+// from a cold start — with an embed already running they send loadVideoById
+// instead (no navigation), which is also what keeps autoplay working when the
+// tab is backgrounded. See startQueue/playIndex.
 function setEmbed(url) {
   const fresh = document.createElement("iframe");
   fresh.id = "yt";
@@ -103,6 +105,10 @@ window.addEventListener("message", (e) => {
 // --- Queue loading --------------------------------------------------------
 
 function startQueue(queue, startIndex = 0) {
+  // Whether a track-mode embed is playing RIGHT NOW, captured before the
+  // assignments below overwrite it — canReuse decides against the outgoing
+  // player, not the incoming queue.
+  const canReuse = ready && !usingNative;
   currentPlaylistId = queue.playlistId || "";
   currentTitle = queue.title || "";
   if (queue.tracks && queue.tracks.length) {
@@ -116,7 +122,15 @@ function startQueue(queue, startIndex = 0) {
     renderList();
     highlight();
     updateNowPlaying();
-    setEmbed(embedSrc({ videoId: tracks[index].videoId }));
+    // Reuse a live embed instead of replacing the iframe, exactly as playIndex
+    // does for a track advance. A fresh frame carries no media-engagement
+    // history, so Chrome blocks its autoplay=1 while the tab is backgrounded —
+    // which stalled the album queue until the tab was focused. loadVideoById on
+    // an already-playing embed isn't a new autoplay, so it just plays.
+    lastState = null;
+    currentTime = 0;
+    if (canReuse) ytCommand("loadVideoById", [tracks[index].videoId]);
+    else setEmbed(embedSrc({ videoId: tracks[index].videoId }));
   } else if (queue.playlistId) {
     usingNative = true;
     tracks = [];

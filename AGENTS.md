@@ -69,13 +69,23 @@ Appending prefers messaging a live player tab, since the player owns the queue a
 itself; going through storage while it's running would race its `persistQueue()`. Only when no
 tab takes the message does the background merge into `currentQueue` in storage. The player
 recognises such a write via `isAppendOf()` and adopts the new tracks **in place** — calling
-`startQueue()` would reload the embed and restart the playing song.
+`startQueue()` would restart playback from the top of the queue.
 
 The album queue is drained by the player, not the background: `advance()` (used by both the
 ENDED handler and the Next button) calls `pullNextAlbum()` at the end of the queue. It re-reads
 `albumQueue` from storage before shifting, because normal and incognito windows share storage
 and could otherwise claim the same album. `autoAdvanceAlbums` gates this for *both* automatic
 and manual advance — with it off, Next stops at the last track.
+
+**Never replace the iframe when a track-mode embed is already playing.** `setEmbed()` destroys and
+recreates the element, and the fresh frame has no media-engagement history — so Chrome blocks its
+`autoplay=1` whenever the player tab is backgrounded, which stalled every album-queue advance until
+the tab was focused. Both `startQueue()` and `playIndex()` therefore branch: `loadVideoById` on the
+running embed when there is one, `setEmbed()` only from a cold start. `startQueue()` captures that
+decision (`canReuse`) at function entry, *before* the assignments below it overwrite `usingNative` —
+it turns on the OUTGOING player, not the incoming queue. Reuse is gated on `!usingNative` in both
+directions: a keyless `videoseries` embed can't be switched to a single video by command, and vice
+versa, so mode changes still navigate.
 
 `moveAlbum()` mirrors `moveTrack()` for the Up-next panel, but re-reads `albumQueue` from storage
 before splicing — the background appends there, so a stale local copy could drop an album queued
