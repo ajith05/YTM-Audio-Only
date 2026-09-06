@@ -111,7 +111,7 @@ function startQueue(queue, startIndex = 0) {
     index = Math.min(Math.max(0, startIndex), tracks.length - 1);
     document.getElementById("headerSub").textContent =
       `${tracks.length} track${tracks.length === 1 ? "" : "s"} loaded.`;
-    document.getElementById("info").textContent = queueLabel();
+    setInfo();
     updateOpenYtm();
     renderList();
     highlight();
@@ -173,9 +173,17 @@ function albumLabel({ title, tracks: ts }) {
 }
 
 function queueLabel() {
-  if (currentTitle) return `${currentTitle} · ${tracks.length} tracks`;
+  if (currentTitle) return albumLabel({ title: currentTitle, tracks });
   if (tracks.length) return albumLabel({ title: "", tracks });
   return currentPlaylistId ? `Playlist ${currentPlaylistId}` : "No album loaded yet.";
+}
+
+// #info carries a track count as well as the album name, so every path that
+// changes the queue LENGTH has to refresh it — updating headerSub alone leaves
+// the two counts disagreeing until the next reload. Not used by appendTracks:
+// a merged queue spans albums, so naming the first one there would be wrong.
+function setInfo() {
+  document.getElementById("info").textContent = queueLabel();
 }
 
 function renderAlbumQueue() {
@@ -291,6 +299,7 @@ function removeTrack(i) {
   }
   document.getElementById("headerSub").textContent =
     `${tracks.length} track${tracks.length === 1 ? "" : "s"} loaded.`;
+  setInfo();
   persistQueue();
 }
 
@@ -325,7 +334,7 @@ function adoptAppended(nextTracks) {
   updateNowPlaying();
   document.getElementById("headerSub").textContent =
     `${tracks.length} track${tracks.length === 1 ? "" : "s"} loaded.`;
-  document.getElementById("info").textContent = queueLabel();
+  setInfo();
 }
 
 function appendTracks(newTracks) {
